@@ -698,7 +698,7 @@ redo:
 		then wait til they are all done */
 		if (EXP_CPUS > 0 && tracer_num  > 0) {
 
-			PDEBUG_V("$$$$$$$$$$$$$$$$$$$$$$$ round_sync_task: "
+			PDEBUG_I("$$$$$$$$$$$$$$$$$$$$$$$ round_sync_task: "
 			         "Round %d Starting. Waking up worker threads "
 			         "$$$$$$$$$$$$$$$$$$$$$$$$$$\n", round_count);
 			atomic_set(&n_workers_running, EXP_CPUS);
@@ -719,7 +719,7 @@ redo:
 			}
 
 			run_cpu = get_cpu();
-			PDEBUG_V("round_sync_task: "
+			PDEBUG_I("round_sync_task: "
 			         "Waiting for per_cpu_workers to finish. Run_cpu %d\n",
 			         run_cpu);
 
@@ -729,7 +729,7 @@ redo:
 			                         atomic_read(&n_workers_running) == 0);
 
 
-			PDEBUG_V("round_sync_task: All sync drift thread finished\n");
+			PDEBUG_I("round_sync_task: All sync drift thread finished\n");
 			for (i = 0 ; i < EXP_CPUS; i++) {
 				update_all_tracers_virtual_time(i);
 			}
@@ -772,6 +772,61 @@ end:
 	return 0;
 }
 
+void resume_process(tracer * curr_tracer, struct task_struct * t, int cpu,
+			int ignore_sleep) {
+	struct poll_helper_struct * task_poll_helper = NULL;
+	struct select_helper_struct * task_select_helper = NULL;
+	struct sleep_helper_struct * task_sleep_helper = NULL;
+        unsigned long flags;
+	if (!t) {
+		PDEBUG_E("Process to Resume is NULL");
+		return;
+	}
+
+	acquire_irq_lock(&syscall_lookup_lock, flags);
+	task_poll_helper = hmap_get_abs(&poll_process_lookup, t->pid);
+	task_select_helper = hmap_get_abs(&select_process_lookup, t->pid);
+	task_sleep_helper = hmap_get_abs(&sleep_process_lookup, t->pid);
+
+	if (task_poll_helper != NULL) {
+
+		syscall_running[cpu] = 1;
+		atomic_set(&task_poll_helper->done, 1);
+		wake_up(&task_poll_helper->w_queue);
+		release_irq_lock(&syscall_lookup_lock, flags);
+		PDEBUG_I("Poll Wakeup. Pid = %d\n", t->pid);
+		wait_event_interruptible(syscall_control_queue[cpu],
+		                         syscall_running[cpu] == 0);
+		PDEBUG_I("Poll Wakeup Resume. Pid = %d\n", t->pid);
+	} else if (task_select_helper != NULL) {
+		syscall_running[cpu] = 1;
+		atomic_set(&task_select_helper->done, 1);
+		wake_up(&task_select_helper->w_queue);
+		release_irq_lock(&syscall_lookup_lock, flags);
+		PDEBUG_I("Select Wakeup. Pid = %d\n", t->pid);
+		wait_event_interruptible(syscall_control_queue[cpu],
+		                         syscall_running[cpu] == 0);
+		PDEBUG_I("Select Wakeup Resume. Pid = %d\n", t->pid);
+	} else if ( task_sleep_helper != NULL && ignore_sleep == 0
+	            && (task_sleep_helper->wakeup_time <= t->freeze_time
+	                || atomic_read(&experiment_stopping) == 1)) {
+
+		/* Sending a Continue signal here will wake all threads up.
+		We dont want that */
+		syscall_running[cpu] = 1;
+		atomic_set(&task_sleep_helper->done, 1);
+		wake_up(&task_sleep_helper->w_queue);
+		release_irq_lock(&syscall_lookup_lock, flags);
+		PDEBUG_I("Sleep Wakeup. Pid = %d\n", t->pid);
+		wait_event_interruptible(syscall_control_queue[cpu],
+		                         syscall_running[cpu] == 0);
+		PDEBUG_I("Sleep Wakeup Resume. Pid = %d\n", t->pid);
+	} else {
+		release_irq_lock(&syscall_lookup_lock, flags);
+	}
+	
+}
+
 /*
 Assumes curr tracer read lock is acquired before function call. Must return
 read lock still acquired.
@@ -784,61 +839,25 @@ void resume_all(tracer * curr_tracer, struct task_struct * aTask,
 	struct task_struct *me;
 	struct task_struct *t;
 
-	struct poll_helper_struct * task_poll_helper = NULL;
-	struct select_helper_struct * task_select_helper = NULL;
-	struct sleep_helper_struct * task_sleep_helper = NULL;
+	
 	int cpu;
 
 
 	cpu = curr_tracer->cpu_assignment - 2;
+        if (curr_tracer->proc_to_control_pid != -1) {
+		put_tracer_struct_read(curr_tracer);
+		resume_process(curr_tracer, curr_tracer->proc_to_control_task, cpu,
+				ignore_sleep);
+		get_tracer_struct_read(curr_tracer);
+		return;
+	}
+
 	me = aTask;
 	t = me;
 	do {
-
 		if (curr_tracer && t && t->pid != curr_tracer->tracer_task->pid) {
 			put_tracer_struct_read(curr_tracer);
-
-			acquire_irq_lock(&syscall_lookup_lock, flags);
-			task_poll_helper = hmap_get_abs(&poll_process_lookup, t->pid);
-			task_select_helper = hmap_get_abs(&select_process_lookup, t->pid);
-			task_sleep_helper = hmap_get_abs(&sleep_process_lookup, t->pid);
-
-			if (task_poll_helper != NULL) {
-
-				syscall_running[cpu] = 1;
-				atomic_set(&task_poll_helper->done, 1);
-				wake_up(&task_poll_helper->w_queue);
-				release_irq_lock(&syscall_lookup_lock, flags);
-				PDEBUG_V("Poll Wakeup. Pid = %d\n", t->pid);
-				wait_event_interruptible(syscall_control_queue[cpu],
-				                         syscall_running[cpu] == 0);
-				PDEBUG_V("Poll Wakeup Resume. Pid = %d\n", t->pid);
-			} else if (task_select_helper != NULL) {
-				syscall_running[cpu] = 1;
-				atomic_set(&task_select_helper->done, 1);
-				wake_up(&task_select_helper->w_queue);
-				release_irq_lock(&syscall_lookup_lock, flags);
-				PDEBUG_V("Select Wakeup. Pid = %d\n", t->pid);
-				wait_event_interruptible(syscall_control_queue[cpu],
-				                         syscall_running[cpu] == 0);
-				PDEBUG_V("Select Wakeup Resume. Pid = %d\n", t->pid);
-			} else if ( task_sleep_helper != NULL && ignore_sleep == 0
-			            && (task_sleep_helper->wakeup_time <= t->freeze_time
-			                || atomic_read(&experiment_stopping) == 1)) {
-
-				/* Sending a Continue signal here will wake all threads up.
-				We dont want that */
-				syscall_running[cpu] = 1;
-				atomic_set(&task_sleep_helper->done, 1);
-				wake_up(&task_sleep_helper->w_queue);
-				release_irq_lock(&syscall_lookup_lock, flags);
-				PDEBUG_V("Sleep Wakeup. Pid = %d\n", t->pid);
-				wait_event_interruptible(syscall_control_queue[cpu],
-				                         syscall_running[cpu] == 0);
-				PDEBUG_V("Sleep Wakeup Resume. Pid = %d\n", t->pid);
-			} else {
-				release_irq_lock(&syscall_lookup_lock, flags);
-			}
+			resume_process(curr_tracer, t, cpu, ignore_sleep);
 			get_tracer_struct_read(curr_tracer);
 		}
 	} while_each_thread(me, t);
@@ -862,8 +881,11 @@ read lock still acquired.
 void resume_all_syscall_blocked_processes(tracer * curr_tracer,
         int ignore_sleep) {
 
-	if (curr_tracer)
+	if (curr_tracer) {
+		PDEBUG_I("############# Resume all Syscalls: Tracer: %d\n", curr_tracer->tracer_task->pid); 
 		resume_all(curr_tracer, curr_tracer->tracer_task, ignore_sleep);
+
+	}
 
 }
 
@@ -1003,7 +1025,7 @@ void clean_up_all_irrelevant_processes(tracer * curr_tracer) {
 		                                  curr_elem->pid) != NULL) {
 
 			if (task == NULL) { // task is dead
-				PDEBUG_V("Clean up irrelevant processes: "
+				PDEBUG_I("Clean up irrelevant processes: "
 				         "Curr elem: %d. Task is dead\n", curr_elem->pid);
 				put_tracer_struct_read(curr_tracer);
 				get_tracer_struct_write(curr_tracer);
@@ -1011,7 +1033,7 @@ void clean_up_all_irrelevant_processes(tracer * curr_tracer) {
 				put_tracer_struct_write(curr_tracer);
 				get_tracer_struct_read(curr_tracer);
 			} else { // task is ignored
-				PDEBUG_V("Clean up irrelevant processes: "
+				PDEBUG_I("Clean up irrelevant processes: "
 				         "Curr elem: %d. Task is ignored\n", curr_elem->pid);
 
 				put_tracer_struct_read(curr_tracer);
@@ -1216,28 +1238,6 @@ lxc_schedule_elem * get_next_runnable_task(tracer * curr_tracer) {
 	llist_elem* head = schedule_queue->head;
 
 
-	/*
-	n_scheduled_processes = schedule_list_size(curr_tracer);
-
-	while (n_checked_processes < n_scheduled_processes) {
-
-		curr_elem =
-		    (lxc_schedule_elem *)llist_get(&curr_tracer->schedule_queue, 0);
-
-		if (!curr_elem)
-			return NULL;
-
-		put_tracer_struct_read(curr_tracer);
-		get_tracer_struct_write(curr_tracer);
-		requeue_schedule_list(curr_tracer);
-		put_tracer_struct_write(curr_tracer);
-		get_tracer_struct_read(curr_tracer);
-		n_checked_processes ++;
-		if (curr_elem->n_insns_curr_round)
-			return curr_elem;
-	}
-	*/
-
 	head = schedule_queue->head;
 	while (head != NULL) {
 		curr_elem = (lxc_schedule_elem *)head->item;
@@ -1296,6 +1296,7 @@ void wait_for_tracer_completion(tracer * curr_tracer) {
 
 }
 
+
 #ifndef __TK_MULTI_CORE_MODE
 int unfreeze_proc_exp_single_core_mode(tracer * curr_tracer) {
 
@@ -1317,7 +1318,7 @@ int unfreeze_proc_exp_single_core_mode(tracer * curr_tracer) {
 	if (curr_tracer->quantum_n_insns == 0)
 		return SUCCESS;
 
-
+	
 
 	/* for adding any new tasks that might have been spawned */
 	put_tracer_struct_read(curr_tracer);
@@ -1342,9 +1343,6 @@ int unfreeze_proc_exp_single_core_mode(tracer * curr_tracer) {
 		put_tracer_struct_read(curr_tracer);
 		get_tracer_struct_write(curr_tracer);
 		add_task_to_tracer_run_queue(curr_tracer, curr_elem);
-		//if (rem_n_insns > 0)
-		//	update_task_virtual_time(curr_tracer, curr_elem->curr_task,
-		//	                         rem_n_insns);
 		rem_n_insns += curr_elem->n_insns_curr_round;
 		curr_elem->n_insns_curr_round = 0; // reset to zero
 		put_tracer_struct_write(curr_tracer);
@@ -1358,14 +1356,7 @@ int unfreeze_proc_exp_single_core_mode(tracer * curr_tracer) {
 		signal_tracer_resume(curr_tracer);
 		wait_for_tracer_completion(curr_tracer);
 		get_tracer_struct_read(curr_tracer);
-	}
-
-
-	//curr_tracer->tracer_task->freeze_time =
-	//    curr_tracer->tracer_task->freeze_time + curr_tracer->freeze_quantum;
-
-
-
+	} 
 	return SUCCESS;
 }
 
