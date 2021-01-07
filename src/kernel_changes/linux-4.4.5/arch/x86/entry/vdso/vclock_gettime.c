@@ -11,14 +11,14 @@
  * Check with readelf after changing.
  */
 
-#include <uapi/linux/time.h>
-#include <asm/vgtod.h>
 #include <asm/hpet.h>
-#include <asm/vvar.h>
-#include <asm/unistd.h>
 #include <asm/msr.h>
+#include <asm/unistd.h>
+#include <asm/vgtod.h>
+#include <asm/vvar.h>
 #include <linux/math64.h>
 #include <linux/time.h>
+#include <uapi/linux/time.h>
 
 #define gtod (&VVAR(vsyscall_gtod_data))
 
@@ -38,10 +38,10 @@ static notrace cycle_t vread_hpet(void)
 
 #ifndef BUILD_VDSO32
 
-#include <linux/kernel.h>
-#include <asm/vsyscall.h>
 #include <asm/fixmap.h>
 #include <asm/pvclock.h>
+#include <asm/vsyscall.h>
+#include <linux/kernel.h>
 
 notrace static long vdso_fallback_gettime(long clock, struct timespec *ts)
 {
@@ -195,7 +195,7 @@ notrace static cycle_t vread_tsc(void)
 notrace static long vdso_fallback_c_gettime(time_t *t)
 {
 	long ret;
-	asm("syscall" : "=a" (ret) : "0" (__NR_time), "D" (t) : "memory");
+	asm("syscall" : "=a"(ret) : "0"(__NR_time), "D"(t) : "memory");
 	return ret;
 }
 notrace static inline u64 vgetsns(int *mode)
@@ -334,14 +334,7 @@ int gettimeofday(struct timeval *, struct timezone *)
 notrace time_t __vdso_time(time_t *t)
 {
 	/* This is atomic on x86 so we don't need any locks. */
-	/* time_t result = ACCESS_ONCE(gtod->wall_time_sec);
-
-	if (t)
-		*t = result;
-	return result;
-*/
-return vdso_fallback_c_gettime(t);
-
+	return vdso_fallback_c_gettime(t);
 }
 int time(time_t *t)
 	__attribute__((weak, alias("__vdso_time")));

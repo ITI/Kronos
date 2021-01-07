@@ -221,7 +221,7 @@ AR = ar
 AUTOCONF = ${SHELL} /home/kronos/Kronos/src/tracer/libperf/build-aux/missing autoconf
 AUTOHEADER = ${SHELL} /home/kronos/Kronos/src/tracer/libperf/build-aux/missing autoheader
 AUTOMAKE = ${SHELL} /home/kronos/Kronos/src/tracer/libperf/build-aux/missing automake-1.15
-AWK = mawk
+AWK = gawk
 CC = gcc
 CCDEPMODE = depmode=gcc3
 CFLAGS = -g -O2
@@ -245,7 +245,7 @@ INSTALL_DATA = ${INSTALL} -m 644
 INSTALL_PROGRAM = ${INSTALL}
 INSTALL_SCRIPT = ${INSTALL}
 INSTALL_STRIP_PROGRAM = $(install_sh) -c -s
-LD = /usr/bin/x86_64-linux-gnu-ld -m elf_x86_64
+LD = /usr/bin/ld -m elf_x86_64
 LDFLAGS = 
 LIBOBJS = 
 LIBPERF_API_VERSION = 1.0

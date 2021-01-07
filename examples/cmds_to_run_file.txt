@@ -1,1 +1,5 @@
-/home/kronos/cmd_executor -f /home/kronos/test_cmds.txt
+/usr/bin/sysbench --test=cpu --cpu-max-prime=1000 run
+/usr/bin/sysbench --test=cpu --cpu-max-prime=1000 run
+/usr/bin/sysbench --test=cpu --cpu-max-prime=1000 run
+/usr/bin/sysbench --test=cpu --cpu-max-prime=1000 run
+/usr/bin/sysbench --test=cpu --cpu-max-prime=1000 run

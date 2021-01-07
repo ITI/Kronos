@@ -10,7 +10,7 @@
 
 #define dotraplinkage __visible
 
-asmlinkage struct task_struct * get_current_asm(void);
+asmlinkage struct task_struct *get_current_asm(void);
 asmlinkage void divide_error(void);
 asmlinkage void debug(void);
 asmlinkage void nmi(void);
